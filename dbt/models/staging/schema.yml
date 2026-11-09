@@ -1,0 +1,81 @@
+version: 2
+models:
+  - name: stg_transactions
+    description: Операции с нормализованными строками, типами и признаками для аналитики.
+    data_tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          arguments:
+            min_value: 1
+    columns:
+      - name: transaction_time
+        description: Время операции в UTC.
+        data_tests: [not_null]
+      - name: transaction_date
+        description: Дата операции в UTC.
+        data_tests: [not_null]
+      - name: day_of_week
+        description: День недели, понедельник 1, воскресенье 7.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4, 5, 6, 7]
+                quote: false
+      - name: hour
+        description: Час операции от 0 до 23 в UTC.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 23
+      - name: merchant
+        description: Название мерчанта без пробелов по краям.
+        data_tests: [not_null]
+      - name: category
+        description: Категория операции в нижнем регистре.
+        data_tests: [not_null]
+      - name: amount
+        description: Сумма операции в денежных единицах исходного датасета.
+        data_tests: [not_null]
+      - name: amount_bucket
+        description: SMALL меньше 100, MEDIUM от 100 до 1000, LARGE от 1000 включительно.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [SMALL, MEDIUM, LARGE]
+      - name: customer_id
+        description: Хеш имени, фамилии, улицы и индекса; приближение идентификатора клиента.
+        data_tests: [not_null]
+      - name: gender
+        description: Пол клиента в верхнем регистре.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [M, F]
+      - name: state
+        description: Код штата в верхнем регистре.
+        data_tests: [not_null]
+      - name: is_fraud
+        description: Метка фрода, 0 или 1.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+                quote: false
+
+unit_tests:
+  - name: staging_normalizes_and_buckets
+    description: Нормализация строк, календарные признаки и границы сегментов суммы.
+    model: stg_transactions
+    given:
+      - input: source('raw', 'transactions')
+        rows:
+          - {transaction_time: '2024-01-01 00:30:00', merch: ' Shop ', cat_id: ' FOOD ', amount: 99.99, name_1: Ann, name_2: Smith, street: Main, post_code: 12345, gender: ' f ', us_state: ' ca ', target: 0}
+          - {transaction_time: '2024-01-01 12:00:00', merch: Shop, cat_id: food, amount: 100, name_1: Ann, name_2: Smith, street: Main, post_code: 12345, gender: F, us_state: CA, target: 0}
+          - {transaction_time: '2024-01-07 23:00:00', merch: Shop, cat_id: food, amount: 999.99, name_1: Ann, name_2: Smith, street: Main, post_code: 12345, gender: F, us_state: CA, target: 1}
+          - {transaction_time: '2024-01-07 23:30:00', merch: Shop, cat_id: food, amount: 1000, name_1: Ann, name_2: Smith, street: Main, post_code: 12345, gender: F, us_state: CA, target: 1}
+    expect:
+      rows:
+        - {merchant: Shop, category: food, gender: F, state: CA, day_of_week: 1, hour: 0, amount_bucket: SMALL, is_fraud: 0}
+        - {merchant: Shop, category: food, gender: F, state: CA, day_of_week: 1, hour: 12, amount_bucket: MEDIUM, is_fraud: 0}
+        - {merchant: Shop, category: food, gender: F, state: CA, day_of_week: 7, hour: 23, amount_bucket: MEDIUM, is_fraud: 1}
+        - {merchant: Shop, category: food, gender: F, state: CA, day_of_week: 7, hour: 23, amount_bucket: LARGE, is_fraud: 1}

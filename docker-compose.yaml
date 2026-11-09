@@ -1,0 +1,29 @@
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.9-alpine
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    ports:
+      - "127.0.0.1:8124:8123"
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  dbt:
+    build: .
+    profiles: ["tools"]
+    environment:
+      CLICKHOUSE_HOST: clickhouse
+    volumes:
+      - ./dbt:/app
+    ports:
+      - "127.0.0.1:8082:8080"
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+volumes:
+  clickhouse_data:

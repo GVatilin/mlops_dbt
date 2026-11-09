@@ -1,0 +1,23 @@
+version: 2
+sources:
+  - name: raw
+    schema: transactions_db
+    description: Транзакции из домашнего задания по ClickHouse.
+    tables:
+      - name: transactions
+        description: Одна строка на операцию, target содержит метку мошенничества.
+        columns:
+          - name: transaction_time
+            description: Время операции в UTC.
+            data_tests: [not_null]
+          - name: amount
+            description: Сумма операции в денежных единицах исходного датасета.
+            data_tests: [not_null]
+          - name: target
+            description: 1 означает фрод, 0 означает обычную операцию.
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: [0, 1]
+                    quote: false

@@ -1,0 +1,158 @@
+version: 2
+models:
+  - name: mart_daily_state_metrics
+    description: Дневной оборот, средний чек и распределение сумм по штатам.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [transaction_date, state]
+    columns:
+      - name: transaction_date
+        description: Дата операций в UTC, часть ключа витрины.
+        data_tests: [not_null]
+      - name: state
+        description: Штат, часть ключа витрины.
+        data_tests: [not_null]
+      - name: transaction_count
+        description: Количество операций за день в штате.
+      - name: total_amount
+        description: Сумма всех операций.
+      - name: avg_amount
+        description: Средний чек.
+      - name: p95_amount
+        description: Точный 95-й перцентиль суммы операции.
+      - name: large_transaction_share
+        description: Доля операций от 1000 включительно, от 0 до 1.
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 0
+                max_value: 1
+  - name: mart_fraud_by_category
+    description: Частота и суммы фрода по категориям операций.
+    columns:
+      - name: category
+        description: Категория операции, ключ витрины.
+        data_tests: [not_null, unique]
+      - name: transaction_count
+        description: Количество операций в категории.
+      - name: fraud_count
+        description: Количество мошеннических операций.
+      - name: fraud_rate
+        description: Процент мошеннических операций, от 0 до 100.
+      - name: total_amount
+        description: Сумма всех операций.
+      - name: fraud_amount
+        description: Сумма мошеннических операций.
+  - name: mart_fraud_by_state
+    description: География фрода и число участников операций по штатам.
+    columns:
+      - name: state
+        description: Штат, ключ витрины.
+        data_tests: [not_null, unique]
+      - name: transaction_count
+        description: Количество операций в штате.
+      - name: fraud_count
+        description: Количество мошеннических операций.
+      - name: fraud_rate
+        description: Процент мошеннических операций, от 0 до 100.
+      - name: customer_count
+        description: Точное число уникальных customer_id.
+      - name: merchant_count
+        description: Точное число уникальных мерчантов.
+      - name: total_amount
+        description: Сумма всех операций.
+      - name: fraud_amount
+        description: Сумма мошеннических операций.
+  - name: mart_customer_risk_profile
+    description: Сводная история клиента и риск по наблюдаемой доле фрода.
+    columns:
+      - name: customer_id
+        description: Приближённый идентификатор клиента, ключ витрины.
+        data_tests: [not_null, unique]
+      - name: transaction_count
+        description: Число операций клиента за всю историю.
+      - name: first_transaction_at
+        description: Время первой операции.
+      - name: last_transaction_at
+        description: Время последней операции.
+      - name: fraud_count
+        description: Число мошеннических операций клиента.
+      - name: fraud_rate
+        description: Процент мошеннических операций, от 0 до 100.
+      - name: avg_amount
+        description: Средний чек клиента.
+      - name: total_amount
+        description: Сумма операций клиента.
+      - name: risk_level
+        description: HIGH при fraud_rate от 5%, MEDIUM от 1%, иначе LOW.
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [HIGH, MEDIUM, LOW]
+  - name: mart_hourly_fraud_pattern
+    description: Частота фрода по дню недели и часу, даты объединяются.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [day_of_week, hour]
+    columns:
+      - name: day_of_week
+        description: День недели от 1 до 7, часть ключа витрины.
+        data_tests: [not_null]
+      - name: hour
+        description: Час в UTC от 0 до 23, часть ключа витрины.
+        data_tests: [not_null]
+      - name: transaction_count
+        description: Число операций в этом временном окне.
+      - name: fraud_count
+        description: Число мошеннических операций.
+      - name: fraud_rate
+        description: Процент мошеннических операций, от 0 до 100.
+      - name: total_amount
+        description: Сумма всех операций в окне.
+      - name: is_high_risk
+        description: Флаг окна с fraud_rate от 5% включительно.
+  - name: mart_merchant_analytics
+    description: Оборот и частота фрода по мерчантам.
+    columns:
+      - name: merchant
+        description: Название мерчанта, ключ витрины.
+        data_tests: [not_null, unique]
+      - name: transaction_count
+        description: Число операций мерчанта.
+      - name: fraud_count
+        description: Число мошеннических операций.
+      - name: turnover
+        description: Сумма всех операций мерчанта.
+      - name: fraud_amount
+        description: Сумма мошеннических операций.
+      - name: fraud_rate
+        description: Процент мошеннических операций, от 0 до 100.
+      - name: is_suspicious
+        description: Флаг мерчанта с fraud_rate от 5% включительно.
+
+unit_tests:
+  - name: customer_risk_thresholds
+    description: Границы риска при 0%, 1% и 5% фрода.
+    model: mart_customer_risk_profile
+    given:
+      - input: ref('stg_transactions')
+        format: sql
+        rows: |
+          select
+              customer_id,
+              toDateTime('2024-01-01 00:00:00') as transaction_time,
+              toFloat64(100) as amount,
+              toUInt8(number < fraud_count) as is_fraud
+          from numbers(100) as n
+          cross join (
+              select 'low' as customer_id, 0 as fraud_count
+              union all select 'medium', 1
+              union all select 'high', 5
+          ) as customers
+    expect:
+      rows:
+        - {customer_id: low, transaction_count: 100, fraud_rate: 0, avg_amount: 100, risk_level: LOW}
+        - {customer_id: medium, transaction_count: 100, fraud_rate: 1, avg_amount: 100, risk_level: MEDIUM}
+        - {customer_id: high, transaction_count: 100, fraud_rate: 5, avg_amount: 100, risk_level: HIGH}
